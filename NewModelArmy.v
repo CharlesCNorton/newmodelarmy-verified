@@ -7,9 +7,9 @@
 (*     Self-Denying Ordinance compliance, and command succession rules.       *)
 (*     The first English standing army with standardized organization.        *)
 (*                                                                            *)
-(*     "I had rather have a plain, russet-coated Captain, that knows         *)
-(*      what he fights for, and loves what he knows, than that which          *)
-(*      you call a Gentle-man and is nothing else."                           *)
+(*     I had rather have a plain, russet-coated Captain, that knows          *)
+(*     what he fights for, and loves what he knows, than that which           *)
+(*     you call a Gentle-man and is nothing else.                             *)
 (*                                              -- Oliver Cromwell, 1643     *)
 (*                                                                            *)
 (*     Author: Charles C. Norton                                              *)
@@ -18,7 +18,7 @@
 (*                                                                            *)
 (******************************************************************************)
 
-From Stdlib Require Import Arith PeanoNat Bool List Lia.
+From Stdlib Require Import Arith PeanoNat Bool List Lia NArith.
 Import ListNotations.
 
 (* ====================================================================== *)
@@ -284,6 +284,24 @@ Definition all_ranks : list rank :=
    CommissaryGeneral; MajorGeneral; LtGeneral; CaptainGeneral].
 
 Lemma all_ranks_length : length all_ranks = 16.
+Proof. reflexivity. Qed.
+
+(* --- Branch-specific title equivalences --- *)
+
+(** Cornet (horse) holds the same precedence as Ensign (foot). *)
+Definition Cornet := Ensign.
+(** Trumpeter (horse) holds the same precedence as Drummer (foot). *)
+Definition Trumpeter := Drummer.
+(** Trooper (horse) holds the same precedence as Private (foot). *)
+Definition Trooper := Private.
+
+Lemma cornet_same_precedence : rank_index Cornet = rank_index Ensign.
+Proof. reflexivity. Qed.
+
+Lemma trumpeter_same_precedence : rank_index Trumpeter = rank_index Drummer.
+Proof. reflexivity. Qed.
+
+Lemma trooper_same_precedence : rank_index Trooper = rank_index Private.
 Proof. reflexivity. Qed.
 
 
@@ -555,17 +573,54 @@ Definition total_daily_cost :=
   num_horse_regiments   * horse_daily +
   num_dragoon_regiments * dragoon_daily.
 
-(** Total daily pay: 12 x 12,636 + 11 x 17,148 + 1 x 21,432
-    = 361,692 pence = £1,507 1s 0d.
+(* --- Aggregate cost verification via binary naturals ---
 
-    Per-regiment figures are machine-checked above.  The aggregate
-    and monthly totals exceed Peano nat's practical range in Rocq 9.
+   Per-regiment costs are verified above in Peano nat.  Aggregate
+   figures exceed Peano's practical range (~100K in Rocq 9), so
+   the totals are computed in N (binary naturals) where arithmetic
+   is O(log n).
 
-    Monthly (28 days): 10,127,376 pence = £42,197 8s 0d.
-    The parliamentary assessment was £53,506/month; the ~£11,300
-    surplus covered provisions, munitions, and transport.
+   Source: Gentles, The New Model Army, pp. 36-42. *)
 
-    Source: Gentles, The New Model Army, pp. 36-42. *)
+Definition foot_daily_N    : N := N.of_nat foot_daily.
+Definition horse_daily_N   : N := N.of_nat horse_daily.
+Definition dragoon_daily_N : N := N.of_nat dragoon_daily.
+
+Definition total_daily_cost_N : N :=
+  (N.of_nat num_foot_regiments * foot_daily_N +
+   N.of_nat num_horse_regiments * horse_daily_N +
+   N.of_nat num_dragoon_regiments * dragoon_daily_N)%N.
+
+(** Total army daily pay: 361,692 pence. *)
+Theorem total_daily_cost_361692 : total_daily_cost_N = 361692%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition monthly_pay_N : N := (total_daily_cost_N * 28)%N.
+
+(** Monthly pay cost: 10,127,376 pence. *)
+Theorem monthly_pay_10127376 : monthly_pay_N = 10127376%N.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Daily pay in £/s/d: verified as (pounds, shillings, pence) in N
+    to avoid Peano overflow on the pounds figure. *)
+Theorem daily_pay_in_pounds :
+  ((total_daily_cost_N / 240)%N,
+   ((total_daily_cost_N mod 240) / 12)%N,
+   ((total_daily_cost_N mod 240) mod 12)%N) = (1507%N, 1%N, 0%N).
+Proof. vm_compute. reflexivity. Qed.
+
+(** Monthly pay: £42,197 8s 0d.
+
+    The parliamentary monthly assessment was £53,506.  The surplus of
+    approximately £11,300 covered provisions (bread, cheese, beer),
+    munitions, transport, medical supplies, and fortification —
+    roughly 21% of the total, consistent with the standard estimate
+    that pay constitutes 75-80% of military expenditure. *)
+Theorem monthly_pay_in_pounds :
+  ((monthly_pay_N / 240)%N,
+   ((monthly_pay_N mod 240) / 12)%N,
+   ((monthly_pay_N mod 240) mod 12)%N) = (42197%N, 8%N, 0%N).
+Proof. vm_compute. reflexivity. Qed.
 
 
 (* ====================================================================== *)
@@ -631,6 +686,38 @@ Proof.
   intros r b d Hd; unfold sdo_compliant; simpl.
   destruct (d <? 40) eqn:E; simpl; auto.
   apply Nat.ltb_lt in E; lia.
+Qed.
+
+(** Non-compliance is permanent for unreappointed MPs: once the
+    40 days expire, the officer cannot regain compliance without
+    reappointment by both Houses.  A temporal safety property. *)
+Lemma sdo_non_compliance_permanent : forall r b d1 d2,
+  40 <= d1 -> d1 <= d2 ->
+  sdo_compliant (mk_officer_status r b true false d1) = false ->
+  sdo_compliant (mk_officer_status r b true false d2) = false.
+Proof.
+  intros r b d1 d2 Hd1 Hd12 H1.
+  unfold sdo_compliant; simpl.
+  destruct (d2 <? 40) eqn:E; simpl; auto.
+  apply Nat.ltb_lt in E; lia.
+Qed.
+
+(** Reappointment grants permanent compliance: once reappointed,
+    an MP remains compliant regardless of elapsed time. *)
+Lemma sdo_reappointment_permanent : forall r b d,
+  sdo_compliant (mk_officer_status r b true true d) = true.
+Proof.
+  intros; unfold sdo_compliant; simpl.
+  destruct (d <? 40); reflexivity.
+Qed.
+
+(** The SDO partitions officers into exactly three exhaustive classes. *)
+Lemma sdo_trichotomy : forall o,
+  (os_is_mp o = false) \/
+  (os_is_mp o = true /\ os_reappointed o = true) \/
+  (os_is_mp o = true /\ os_reappointed o = false).
+Proof.
+  intro o; destruct (os_is_mp o); destruct (os_reappointed o); auto.
 Qed.
 
 (* --- Historical instantiations --- *)
@@ -735,6 +822,34 @@ Proof.
   destruct r; unfold rank_le, rank_index in *;
   try (eexists; reflexivity); lia.
 Qed.
+
+(** Succession depth: the number of links from a given rank to the
+    end of the chain.  Computed with bounded fuel to ensure termination. *)
+Fixpoint succession_depth (r : rank) (fuel : nat) : nat :=
+  match fuel with
+  | 0 => 0
+  | S fuel' =>
+    match field_successor r with
+    | None => 0
+    | Some r' => S (succession_depth r' fuel')
+    end
+  end.
+
+(** From Colonel the chain has depth exactly 3:
+    Colonel -> LtColonel -> Major -> Captain -> end. *)
+Lemma colonel_succession_depth_3 :
+  succession_depth Colonel 10 = 3.
+Proof. reflexivity. Qed.
+
+(** From LtColonel the chain has depth 2. *)
+Lemma ltcolonel_succession_depth_2 :
+  succession_depth LtColonel 10 = 2.
+Proof. reflexivity. Qed.
+
+(** From Major the chain has depth 1. *)
+Lemma major_succession_depth_1 :
+  succession_depth Major 10 = 1.
+Proof. reflexivity. Qed.
 
 
 (* ====================================================================== *)
@@ -889,7 +1004,109 @@ Qed.
 
 
 (* ====================================================================== *)
-(*  Part XI — Structural invariants                                        *)
+(*  Part XI — Named regiment roster and prosopography                      *)
+(* ====================================================================== *)
+
+(* The 24 colonels of the February 1645 establishment, with social
+   origins.  The overwhelming majority were gentry; the meritocratic
+   revolution (Hewson, Pride, Goffe, Barkstead) occurred gradually
+   from 1647 onward as the army purged moderates and radicals rose.
+
+   Source: Gentles, The New Model Army, Appendix I and pp. 117-130;
+   ODNB entries for each officer; Firth, Cromwell's Army, Ch. II. *)
+
+Definition social_origin_eqb (o1 o2 : social_origin) : bool :=
+  match o1, o2 with
+  | Gentry, Gentry | Yeomanry, Yeomanry | Trade, Trade
+  | Clergy, Clergy | OriginUnknown, OriginUnknown => true
+  | _, _ => false
+  end.
+
+Fixpoint count_origin (o : social_origin)
+    (l : list social_origin) : nat :=
+  match l with
+  | [] => 0
+  | x :: xs =>
+    (if social_origin_eqb x o then 1 else 0) + count_origin o xs
+  end.
+
+(** The 24 colonels' social origins, ordered: 12 foot, 11 horse,
+    1 dragoon.  Butler and Graves are insufficiently documented. *)
+Definition colonel_origins_1645 : list social_origin :=
+  [ (* Foot colonels *)
+    Gentry;         (* Sir Thomas Fairfax — 3rd Baron *)
+    Yeomanry;       (* Philip Skippon — career soldier, Norfolk *)
+    Gentry;         (* John Pickering — Northamptonshire *)
+    Gentry;         (* Edward Montagu — later 1st Earl of Sandwich *)
+    Gentry;         (* Sir Hardress Waller — Anglo-Irish *)
+    Gentry;         (* Thomas Rainsborough — Wapping maritime *)
+    Gentry;         (* Edward Harley — Herefordshire *)
+    Gentry;         (* Ralph Weldon — Kent *)
+    Gentry;         (* Richard Fortescue — Devon *)
+    Gentry;         (* Richard Ingoldsby — Buckinghamshire *)
+    Gentry;         (* Robert Hammond — chaplain's son, gentry *)
+    Gentry;         (* 12th: disputed; Robert Lilburne per Gentles *)
+    (* Horse colonels *)
+    Gentry;         (* Sir Thomas Fairfax — horse regiment *)
+    Gentry;         (* Oliver Cromwell — Huntingdon *)
+    Gentry;         (* Henry Ireton — Nottinghamshire *)
+    Gentry;         (* Edward Whalley — Cromwell's cousin *)
+    Gentry;         (* Charles Fleetwood — Buckinghamshire *)
+    Gentry;         (* Nathaniel Rich — Essex cadet branch *)
+    Gentry;         (* Thomas Sheffield *)
+    Gentry;         (* Sir Robert Pye — Faringdon *)
+    OriginUnknown;  (* John Butler — insufficiently documented *)
+    OriginUnknown;  (* Richard Graves — insufficiently documented *)
+    Gentry;         (* Bartholomew Vermuyden — Dutch gentry *)
+    (* Dragoon colonel *)
+    Trade           (* John Okey — chandler from London *)
+  ].
+
+Lemma colonel_roster_length :
+  length colonel_origins_1645 = 24.
+Proof. reflexivity. Qed.
+
+(** 20 of 24 colonels were gentry. *)
+Theorem gentry_count_1645 :
+  count_origin Gentry colonel_origins_1645 = 20.
+Proof. reflexivity. Qed.
+
+(** 1 was yeomanry (Skippon). *)
+Theorem yeomanry_count_1645 :
+  count_origin Yeomanry colonel_origins_1645 = 1.
+Proof. reflexivity. Qed.
+
+(** 1 was trade (Okey). *)
+Theorem trade_count_1645 :
+  count_origin Trade colonel_origins_1645 = 1.
+Proof. reflexivity. Qed.
+
+(** 2 are insufficiently documented. *)
+Theorem unknown_count_1645 :
+  count_origin OriginUnknown colonel_origins_1645 = 2.
+Proof. reflexivity. Qed.
+
+(** The gentry comprised the overwhelming majority of the original
+    colonels: at least 20 of 24.  The New Model's meritocratic
+    revolution was a process (1647-1649), not the initial state. *)
+Theorem gentry_supermajority :
+  count_origin Gentry colonel_origins_1645 * 5 >=
+  length colonel_origins_1645 * 4.
+Proof. vm_compute. lia. Qed.
+
+(** The roster is exhaustive: all origins sum to 24. *)
+Theorem roster_exhaustive :
+  count_origin Gentry colonel_origins_1645 +
+  count_origin Yeomanry colonel_origins_1645 +
+  count_origin Trade colonel_origins_1645 +
+  count_origin Clergy colonel_origins_1645 +
+  count_origin OriginUnknown colonel_origins_1645 =
+  length colonel_origins_1645.
+Proof. reflexivity. Qed.
+
+
+(* ====================================================================== *)
+(*  Part XII — Structural invariants                                       *)
 (* ====================================================================== *)
 
 (** Horse regiment is exactly half the size of a foot regiment. *)
@@ -941,11 +1158,14 @@ Proof. vm_compute. lia. Qed.
 
 Print Assumptions establishment_is_22000.
 Print Assumptions pay_monotone.
+Print Assumptions total_daily_cost_361692.
+Print Assumptions monthly_pay_in_pounds.
 Print Assumptions merit_over_birth.
 Print Assumptions cromwell_compliant.
-Print Assumptions manchester_non_compliant.
-Print Assumptions foot_regiment_daily_cost_12636.
+Print Assumptions sdo_non_compliance_permanent.
 Print Assumptions successor_decreases_rank.
+Print Assumptions gentry_count_1645.
+Print Assumptions roster_exhaustive.
 
 
 (* ====================================================================== *)

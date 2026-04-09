@@ -139,6 +139,20 @@ Proof.
   intros; unfold currency_scale; rewrite to_from_pence; reflexivity.
 Qed.
 
+(* --- Binary-natural currency for large sums --- *)
+
+(** [currency_N]: currency record using N for values exceeding Peano
+    nat's practical range (~100K in Rocq 9).  Used for aggregate
+    and monthly cost verification. *)
+Record currency_N := mk_currency_N {
+  pounds_N : N;
+  shillings_N : N;
+  pence_N : N;
+}.
+
+Definition from_pence_full (p : N) : currency_N :=
+  mk_currency_N (p / 240)%N ((p mod 240) / 12)%N ((p mod 240) mod 12)%N.
+
 
 (* ====================================================================== *)
 (*  Part II — Army branches                                                *)
@@ -622,6 +636,121 @@ Theorem monthly_pay_in_pounds :
    ((monthly_pay_N mod 240) mod 12)%N) = (42197%N, 8%N, 0%N).
 Proof. vm_compute. reflexivity. Qed.
 
+(** Monthly pay in full currency_N record. *)
+Theorem monthly_pay_in_currency :
+  from_pence_full monthly_pay_N = mk_currency_N 42197 8 0.
+Proof. vm_compute. reflexivity. Qed.
+
+(* --- Parameterized cost analysis --- *)
+
+(** [establishment_cost f h d]: daily cost as a function of regiment counts. *)
+Definition establishment_cost (f h d : nat) : N :=
+  (N.of_nat f * foot_daily_N +
+   N.of_nat h * horse_daily_N +
+   N.of_nat d * dragoon_daily_N)%N.
+
+(** [establishment_strength f h d]: total men as a function of regiment counts. *)
+Definition establishment_strength (f h d : nat) : nat :=
+  f * 1200 + h * 600 + d * 1000.
+
+(** The 1645 establishment matches the parameterized functions. *)
+Lemma actual_cost_matches :
+  establishment_cost 12 11 1 = total_daily_cost_N.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma actual_strength_matches :
+  establishment_strength 12 11 1 = 22000.
+Proof. reflexivity. Qed.
+
+(** An empty army costs nothing. *)
+Lemma cost_empty : establishment_cost 0 0 0 = 0%N.
+Proof. reflexivity. Qed.
+
+(** Marginal cost: adding one regiment to each branch increases cost
+    by exactly that branch's daily regimental cost.  Constant marginal
+    cost is a consequence of the standardized regimental structure —
+    every regiment of a given branch has the same composition. *)
+Lemma marginal_cost_foot : forall f h d,
+  establishment_cost (S f) h d = (establishment_cost f h d + foot_daily_N)%N.
+Proof.
+  intros; unfold establishment_cost.
+  rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Lemma marginal_cost_horse : forall f h d,
+  establishment_cost f (S h) d = (establishment_cost f h d + horse_daily_N)%N.
+Proof.
+  intros; unfold establishment_cost.
+  rewrite Nat2N.inj_succ. lia.
+Qed.
+
+Lemma marginal_cost_dragoon : forall f h d,
+  establishment_cost f h (S d) = (establishment_cost f h d + dragoon_daily_N)%N.
+Proof.
+  intros; unfold establishment_cost.
+  rewrite Nat2N.inj_succ. lia.
+Qed.
+
+(** Cost is monotone: more regiments of any branch means higher cost. *)
+Lemma cost_mono_foot : forall f1 f2 h d,
+  (f1 <= f2)%nat ->
+  (establishment_cost f1 h d <= establishment_cost f2 h d)%N.
+Proof.
+  intros f1 f2 h d Hle; induction Hle.
+  - apply N.le_refl.
+  - rewrite marginal_cost_foot.
+    apply N.le_trans with (m := establishment_cost m h d); auto.
+    rewrite <- N.add_0_r at 1. apply N.add_le_mono_l. apply N.le_0_l.
+Qed.
+
+Lemma cost_mono_horse : forall f h1 h2 d,
+  (h1 <= h2)%nat ->
+  (establishment_cost f h1 d <= establishment_cost f h2 d)%N.
+Proof.
+  intros f h1 h2 d Hle; induction Hle.
+  - apply N.le_refl.
+  - rewrite marginal_cost_horse.
+    apply N.le_trans with (m := establishment_cost f m d); auto.
+    rewrite <- N.add_0_r at 1. apply N.add_le_mono_l. apply N.le_0_l.
+Qed.
+
+(** A horse regiment costs more than a foot regiment (per regiment). *)
+Lemma horse_regiment_costlier :
+  (foot_daily_N < horse_daily_N)%N.
+Proof. vm_compute. reflexivity. Qed.
+
+(* --- Budget feasibility --- *)
+
+(** The parliamentary monthly assessment: £53,506 = 12,841,440 pence.
+    Source: Firth and Rait, Acts and Ordinances, vol. I, p. 614. *)
+Definition monthly_assessment_N : N := (53506 * 240)%N.
+
+Lemma monthly_assessment_12841440 :
+  monthly_assessment_N = 12841440%N.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The monthly pay fits within the assessment. *)
+Theorem budget_feasibility :
+  (monthly_pay_N <= monthly_assessment_N)%N.
+Proof. vm_compute. discriminate. Qed.
+
+(** The surplus for non-pay costs: 2,714,064 pence = £11,308 12s 0d.
+    This funded provisions, munitions, transport, medical supplies,
+    fortification, and contingencies. *)
+Theorem budget_surplus :
+  (monthly_assessment_N - monthly_pay_N)%N = 2714064%N.
+Proof. vm_compute. reflexivity. Qed.
+
+Theorem budget_surplus_in_pounds :
+  from_pence_full 2714064%N = mk_currency_N 11308 12 0.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Pay consumed 78.9% of the assessment: verified as
+    [10,127,376 * 1000 / 12,841,440 = 788] (i.e., 78.8%). *)
+Theorem pay_fraction_of_assessment :
+  (monthly_pay_N * 1000 / monthly_assessment_N)%N = 788%N.
+Proof. vm_compute. reflexivity. Qed.
+
 
 (* ====================================================================== *)
 (*  Part VII — The Self-Denying Ordinance                                  *)
@@ -934,6 +1063,63 @@ Proof.
   intros; apply merit_over_birth; reflexivity.
 Qed.
 
+(* --- Information-flow guarantee via blinding --- *)
+
+(** [blinded_candidate]: a candidate record that provably lacks the
+    social origin field.  The promotion decision factors through this
+    type, providing a type-level non-interference guarantee: no function
+    from [blinded_candidate] to [bool] can inspect social origin because
+    the type does not contain it. *)
+Record blinded_candidate := mk_blinded {
+  bc_rank       : rank;
+  bc_branch     : branch;
+  bc_campaigns  : nat;
+  bc_recommended : bool;
+  bc_godly      : bool;
+}.
+
+(** [blind c]: erase the social origin from a candidate. *)
+Definition blind (c : promotion_candidate) : blinded_candidate :=
+  mk_blinded (pc_current_rank c) (pc_branch c)
+             (pc_campaigns c) (pc_recommended c) (pc_godly c).
+
+(** Blinded promotion: identical logic, origin-free type. *)
+Definition promotion_eligible_blinded
+    (c : blinded_candidate) (target : rank) : bool :=
+  rank_ltb (bc_rank c) target &&
+  (1 <=? bc_campaigns c) &&
+  bc_recommended c &&
+  bc_godly c.
+
+(** The promotion decision factors through blinding: the original
+    predicate equals the blinded predicate composed with the
+    projection.  This is a non-interference proof by construction —
+    the decision is fully determined by a type that cannot carry
+    origin information.
+
+    In information-flow terms: [social_origin] has security level
+    HIGH, the promotion decision has level LOW, and blinding is the
+    declassification boundary.  The factoring theorem proves that
+    no HIGH information leaks to LOW. *)
+Theorem promotion_factors_through_blinding : forall c target,
+  promotion_eligible c target = promotion_eligible_blinded (blind c) target.
+Proof.
+  intros c target.
+  unfold promotion_eligible, promotion_eligible_blinded, blind.
+  reflexivity.
+Qed.
+
+(** Two candidates with the same blinded projection are identically
+    eligible, regardless of their (possibly different) origins. *)
+Corollary blinding_implies_equal_treatment : forall c1 c2 target,
+  blind c1 = blind c2 ->
+  promotion_eligible c1 target = promotion_eligible c2 target.
+Proof.
+  intros c1 c2 target Hblind.
+  rewrite !promotion_factors_through_blinding.
+  rewrite Hblind. reflexivity.
+Qed.
+
 
 (* ====================================================================== *)
 (*  Part X — Historical witnesses                                          *)
@@ -1159,8 +1345,14 @@ Proof. vm_compute. lia. Qed.
 Print Assumptions establishment_is_22000.
 Print Assumptions pay_monotone.
 Print Assumptions total_daily_cost_361692.
-Print Assumptions monthly_pay_in_pounds.
+Print Assumptions monthly_pay_in_currency.
+Print Assumptions budget_feasibility.
+Print Assumptions budget_surplus_in_pounds.
+Print Assumptions marginal_cost_foot.
+Print Assumptions cost_mono_foot.
 Print Assumptions merit_over_birth.
+Print Assumptions promotion_factors_through_blinding.
+Print Assumptions blinding_implies_equal_treatment.
 Print Assumptions cromwell_compliant.
 Print Assumptions sdo_non_compliance_permanent.
 Print Assumptions successor_decreases_rank.
